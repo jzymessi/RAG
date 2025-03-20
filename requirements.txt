@@ -1,0 +1,102 @@
+aiohappyeyeballs==2.4.6
+aiohttp==3.11.13
+aiosignal==1.3.2
+annotated-types==0.7.0
+anyio==4.8.0
+ascendebug @ file:///usr/local/Ascend/ascend-toolkit/8.0.RC2.2/toolkit/tools/ascendebug-0.1.0-py3-none-any.whl#sha256=7ecb8db90b119acd3cfac0491ca7628606b284a12e592ccc345d4619bff41262
+attrs==25.1.0
+auto-tune @ file:///root/selfgz11926213142/compiler/lib64/auto_tune-0.1.0-py3-none-any.whl#sha256=b6025db4b3af3ca016237303ae4222224092d50e032c7b5d2641a2b0456fc9b0
+certifi==2025.1.31
+cffi==1.17.1
+charset-normalizer==3.4.1
+click==8.1.8
+conda-pack==0.8.1
+cryptography==44.0.2
+dataclasses-json==0.6.7
+dataflow @ file:///root/selfgz11926213142/compiler/lib64/dataflow-0.0.1-py3-none-any.whl#sha256=1b20bf17ef75621fdb1d3717b8bc726744c71af8f0d11f33c12816239a13dd22
+dill==0.3.9
+docx2txt==0.8
+et_xmlfile==2.0.0
+faiss-cpu==1.10.0
+fastapi==0.115.11
+filelock==3.17.0
+frozenlist==1.5.0
+fsspec==2025.2.0
+greenlet==3.1.1
+h11==0.14.0
+hccl @ file:///root/selfgz13406232244/hccl/lib64/hccl-0.1.0-py3-none-any.whl#sha256=74a28514596099c4869a1a752b024b8b33fa611739342bfa6848745ecacdc7cf
+hccl-parser @ file:///usr/local/Ascend/ascend-toolkit/8.0.RC2.2/toolkit/tools/hccl_parser-0.1-py3-none-any.whl#sha256=68c4fcbbf84918e2ca859fda48715333b6546e5fbac2c2bccf899a88e6463ff4
+httpcore==1.0.7
+httpx==0.28.1
+httpx-sse==0.4.0
+huggingface-hub==0.29.1
+idna==3.10
+Jinja2==3.1.5
+joblib==1.4.2
+jsonpatch==1.33
+jsonpointer==3.0.0
+langchain==0.3.19
+langchain-community==0.3.18
+langchain-core==0.3.40
+langchain-text-splitters==0.3.6
+langsmith==0.3.11
+llm-datadist @ file:///root/selfgz11926213142/compiler/lib64/llm_datadist-0.0.1-py3-none-any.whl#sha256=6395cd074517da3d2147ee57d68dab2972635464189a21b1564d616fc606a836
+llm-engine @ file:///root/selfgz11926213142/compiler/lib64/llm_engine-0.0.1-py3-none-any.whl#sha256=bfe6c18d7af33551977185feb7b1c3221186ca3f723c826712bf8ef23f5b4440
+MarkupSafe==3.0.2
+marshmallow==3.26.1
+modelscope==1.23.1
+mpmath==1.3.0
+msadvisor @ file:///usr/local/Ascend/ascend-toolkit/8.0.RC2.2/tools/msadvisor/python/msadvisor-1.0.0-cp37-abi3-linux_aarch64.whl#sha256=647cbaf028d340345ca4d753552d6523516434e144b89a6c938360ac135483b8
+multidict==6.1.0
+multiprocessing_on_dill==3.5.0a4
+mypy-extensions==1.0.0
+networkx==3.4.2
+numpy==1.26.4
+op-compile-tool @ file:///root/selfgz11926213142/compiler/lib64/op_compile_tool-0.1.0-py3-none-any.whl#sha256=bf38302e51c565baf7eb558edba734c8f4772be88d2369d7da4f97cd0220e798
+op-gen @ file:///usr/local/Ascend/ascend-toolkit/8.0.RC2.2/toolkit/tools/op_gen-0.1-py3-none-any.whl#sha256=01fcdd9db249675d688ac2b18d3d9d5a70ed228c2e50dec1b502ae6975a4bdca
+op-test-frame @ file:///usr/local/Ascend/ascend-toolkit/8.0.RC2.2/toolkit/tools/op_test_frame-0.1-py3-none-any.whl#sha256=495e06a2dc0e39fb3b1dedc8822f6387f556888125014cd36c4748c112b34c74
+opc-tool @ file:///root/selfgz11926213142/compiler/lib64/opc_tool-0.1.0-py3-none-any.whl#sha256=e89d6bb9d4c8a29f472c530e1a4cec1d7da072c920bae8887e7fcd6c895a586b
+openpyxl==3.1.5
+orjson==3.10.15
+packaging==24.2
+pandas==2.2.3
+pillow==11.1.0
+propcache==0.3.0
+pycparser==2.22
+pydantic==2.10.6
+pydantic-settings==2.8.1
+pydantic_core==2.27.2
+pypdf==5.3.1
+python-dateutil==2.9.0.post0
+python-dotenv==1.0.1
+pytz==2025.1
+PyYAML==6.0.2
+regex==2024.11.6
+requests==2.32.3
+requests-toolbelt==1.0.0
+runlike==1.5.4
+safetensors==0.5.3
+schedule-search @ file:///root/selfgz11926213142/compiler/lib64/schedule_search-0.1.0-py3-none-any.whl#sha256=e4d0bae65bb32f7b0fbf75c5c6c503355a651c72b143f1a6ce06b3afe77f4a7d
+scikit-learn==1.6.1
+scipy==1.15.2
+sentence-transformers==3.4.1
+six==1.17.0
+sniffio==1.3.1
+some-package==0.1
+SQLAlchemy==2.0.38
+starlette==0.46.0
+sympy==1.13.1
+te @ file:///root/selfgz11926213142/compiler/lib64/te-0.4.0-py3-none-any.whl#sha256=f2e6e1c69c5bf9be355116c53741fd4da4c7d2ab0c011fec983d6986af99e541
+tenacity==9.0.0
+threadpoolctl==3.5.0
+tokenizers==0.21.0
+torch==2.6.0
+tqdm==4.67.1
+transformers==4.49.0
+typing-inspect==0.9.0
+typing_extensions==4.12.2
+tzdata==2025.1
+urllib3==2.3.0
+uvicorn==0.34.0
+yarl==1.18.3
+zstandard==0.23.0
