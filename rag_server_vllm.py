@@ -23,8 +23,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 配置参数
-VLLM_ENDPOINT = "http://125.122.39.104:1025/v1/chat/completions"
-MODEL_NAME = "deepseekr1"
+VLLM_ENDPOINT = "http://125.122.39.29:8000/v1/chat/completions"
+MODEL_NAME = "Qwen-QwQ-32B"
 REQUEST_TIMEOUT = 120  # 增加默认超时时间为120秒
 
 # 提示模板管理
@@ -533,6 +533,7 @@ if __name__ == "__main__":
         log_config=None,  # 禁用uvicorn默认日志
         timeout_keep_alive=300  # 保持长连接
     )
+
 '''
 curl -N  -X POST "http://localhost:8084/generate" -H "Content-Type: application/json" -d '{ "query": "luqia", "stream": false, "max_tokens": 200}'
 
