@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 # 配置参数
 VLLM_ENDPOINT = "http://125.122.39.29:8000/v1/chat/completions"
 MODEL_NAME = "Qwen-QwQ-32B"
+API_KEY = "vllm"
 REQUEST_TIMEOUT = 120  # 增加默认超时时间为120秒
 
 # 提示模板管理
@@ -91,7 +92,7 @@ class QueryRequest(BaseModel):
 
 async def call_vllm_service_non_streaming(prompt: str, params: QueryRequest) -> str:
     """非流式调用服务"""
-    headers = {"Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {API_KEY}","Content-Type": "application/json"}
     data = {
         "model": params.model,
         "messages": [
@@ -125,6 +126,7 @@ async def call_vllm_service_non_streaming(prompt: str, params: QueryRequest) -> 
                 # 手动收集所有块
                 full_response = ""
                 async for chunk in response.aiter_lines():
+                    # print(chunk)
                     if not chunk.strip():
                         continue
                         
@@ -160,7 +162,7 @@ async def call_vllm_service_non_streaming(prompt: str, params: QueryRequest) -> 
 
 async def call_vllm_service_streaming(prompt: str, params: QueryRequest) -> AsyncGenerator[str, None]:
     """流式调用服务"""
-    headers = {"Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {API_KEY}","Content-Type": "application/json"}
     data = {
         "model": params.model,
         "messages": [
@@ -190,6 +192,7 @@ async def call_vllm_service_streaming(prompt: str, params: QueryRequest) -> Asyn
                     )
 
                 async for chunk in response.aiter_lines():
+                    # print(chunk)
                     if not chunk.strip():
                         continue
                         
