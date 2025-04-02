@@ -7,9 +7,16 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import logging
-from typing import Dict, AsyncGenerator, Optional
+from typing import Dict, AsyncGenerator, Optional, List
 import json
 import asyncio
+from transformers import AutoTokenizer
+
+
+# 全局配置
+MAX_CONTEXT_LENGTH = 4096
+MIN_OUTPUT_TOKENS = 200
+MAX_HISTORY_TURNS = 2
 
 # 配置日志
 logging.basicConfig(
@@ -31,12 +38,17 @@ REQUEST_TIMEOUT = 120  # 增加默认超时时间为120秒
 # 提示模板管理
 PROMPT_TEMPLATES = {
     "rag": {
-        "template": """上下文: {context}
-            如果上述上下文为空或与问题无关，请基于你的知识和能力回答问题。
-            如果上下文相关，请严格基于上述上下文提供准确、一致的回答。
-            问题是: {query}
-            请给出清晰、确定的答案:""",
-        "description": "用于RAG检索增强生成的提示模板"
+        "template": """[历史对话]
+        {history}
+
+        [相关上下文]
+        {context}
+
+        [当前问题]
+        {query}
+
+        请根据上述信息给出专业回答：""",
+        "description": "支持前端传入历史的提示模板"
     }
 }
 
@@ -80,8 +92,10 @@ async def search_documents_with_scores(vectorstore: FAISS, query: str, k: int = 
         logger.error(f"搜索文档块失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="搜索文档块失败")
 
+
 class QueryRequest(BaseModel):
     query: str
+    history: Optional[List[Dict[str, str]]] = None  # 格式: [{"user": "问题", "assistant": "回答"}]
     model: str = MODEL_NAME
     stream: bool = False
     max_tokens: Optional[int] = 300
@@ -89,6 +103,30 @@ class QueryRequest(BaseModel):
     top_p: Optional[float] = 0.9
     use_rag: bool = True  # 是否使用RAG
     timeout: Optional[int] = REQUEST_TIMEOUT  # 允许客户端自定义超时时间
+
+def format_history(history: List[Dict], tokenizer, max_tokens: int) -> str:
+    """正确处理历史顺序的版本"""
+    formatted = []
+    current_tokens = 0
+    
+    # 从最早开始保留，但优先保留最近的（取最后N个）
+    valid_history = history[-MAX_HISTORY_TURNS:]  # 取最后2倍轮数作为处理池
+    
+    # 正序处理但控制token
+    for item in valid_history:
+        if not all(key in item for key in ['user', 'assistant']):
+            continue
+            
+        interaction = f"用户：{item['user']}\n助手：{item['assistant']}"
+        tokens = len(tokenizer.encode(interaction, add_special_tokens=False))
+        
+        if current_tokens + tokens > max_tokens:
+            break
+            
+        formatted.append(interaction)
+        current_tokens += tokens
+    
+    return "\n".join(formatted)
 
 async def call_vllm_service_non_streaming(prompt: str, params: QueryRequest) -> str:
     """非流式调用服务"""
@@ -237,21 +275,70 @@ async def call_vllm_service_streaming(prompt: str, params: QueryRequest) -> Asyn
 async def generate_answer(query: str, params: QueryRequest):
     """生成非流式回答"""
     try:
-        # RAG处理流程
-        if params.use_rag:
-            results = await search_documents_with_scores(vectorstore, query, k=5)
-            context = "\n".join(
-                [f"[置信度: {score:.4f}] {doc.page_content}"
-                 for doc, score in results]
-            )
-            prompt = PROMPT_TEMPLATES["rag"]["template"].format(
-                context=context,
-                query=query
-            )
-        else:
-            prompt = PROMPT_TEMPLATES["direct"]["template"].format(query=query)
+        # 1. 处理历史对话
+        history_text = ""
+        if params.history:
+            # 计算历史可用token数（总token的30%）
+            base_prompt = PROMPT_TEMPLATES["rag"]["template"].format(
+                history="", context="", query=query)
+            base_tokens = calculate_tokens(base_prompt)
+            
+            if params.history and len(params.history) > 2:
+                history_ratio = 0.4  # 历史较长时分配更多token
+            else:
+                history_ratio = 0.25
+            history_max_tokens = int((MAX_CONTEXT_LENGTH - MIN_OUTPUT_TOKENS - base_tokens) * history_ratio)
+            
+            history_text = format_history(params.history, tokenizer, history_max_tokens)
 
-        logger.debug(f"生成使用的提示模板: {prompt[:200]}...")  # 截断长日志
+        # 2. 检索文档
+        results = await search_documents_with_scores(vectorstore, query, k=3)
+        
+        # 3. 构建上下文
+        context_parts = []
+        available_tokens = MAX_CONTEXT_LENGTH - MIN_OUTPUT_TOKENS - calculate_tokens(history_text)
+        context_max_tokens = max(available_tokens, 0)  # 确保不小于0
+        
+        for doc, score in sorted(results, key=lambda x: x[1], reverse=True):
+            doc_text = f"[相关度:{score:.2f}] {doc.page_content}"
+            doc_tokens = calculate_tokens(doc_text)
+            
+            if context_max_tokens <= 0:
+                break
+                
+            if doc_tokens > context_max_tokens:
+                truncated = tokenizer.decode(
+                    tokenizer.encode(
+                        doc_text,
+                        max_length=context_max_tokens,
+                        truncation=True,
+                        add_special_tokens=False
+                    )
+                )
+                if truncated:
+                    context_parts.append(truncated)
+                    context_max_tokens -= calculate_tokens(truncated)
+                break
+            else:
+                context_parts.append(doc_text)
+                context_max_tokens -= doc_tokens
+        
+        context = "\n".join(context_parts)
+        
+        # 4. 构建完整提示
+        prompt = PROMPT_TEMPLATES["rag"]["template"].format(
+            history=history_text,
+            context=context,
+            query=query
+        )
+        
+        # 5. 调整生成参数
+        used_tokens = calculate_tokens(prompt)
+        adjusted_max = MAX_CONTEXT_LENGTH - used_tokens
+        safe_max_tokens = max(min(adjusted_max, params.max_tokens or 400), 1)  # 确保≥1
+        params.max_tokens = safe_max_tokens
+        
+        logger.info(f"Token使用 | 总上下文: {used_tokens} | 可生成: {params.max_tokens}")
         
         # 使用非流式调用
         final_answer = await call_vllm_service_non_streaming(prompt, params)
@@ -267,22 +354,72 @@ async def generate_answer(query: str, params: QueryRequest):
 async def generate_streaming_answer(query: str, params: QueryRequest) -> AsyncGenerator[str, None]:
     """生成流式回答（带结构化包装）"""
     try:
-        # RAG处理流程
-        if params.use_rag:
-            results = await search_documents_with_scores(vectorstore, query, k=5)
-            context = "\n".join(
-                [f"[置信度: {score:.4f}] {doc.page_content}"
-                 for doc, score in results]
-            )
-            prompt = PROMPT_TEMPLATES["rag"]["template"].format(
-                context=context,
-                query=query
-            )
-        else:
-            prompt = PROMPT_TEMPLATES["direct"]["template"].format(query=query)
+        # 1. 处理历史对话
+        history_text = ""
+        if params.history:
+            # 计算历史可用token数（总token的30%）
+            base_prompt = PROMPT_TEMPLATES["rag"]["template"].format(
+                history="", context="", query=query)
+            base_tokens = calculate_tokens(base_prompt)
+            
+            if params.history and len(params.history) > 2:
+                history_ratio = 0.4  # 历史较长时分配更多token
+            else:
+                history_ratio = 0.25
+            history_max_tokens = int((MAX_CONTEXT_LENGTH - MIN_OUTPUT_TOKENS - base_tokens) * history_ratio)
+            
+            history_text = format_history(params.history, tokenizer, history_max_tokens)
+        
+        # 2. 检索文档
+        results = await search_documents_with_scores(vectorstore, query, k=3)
+        
+        # 3. 构建上下文
+        context_parts = []
+        available_tokens = MAX_CONTEXT_LENGTH - MIN_OUTPUT_TOKENS - calculate_tokens(history_text)
+        context_max_tokens = max(available_tokens, 0)  # 确保不小于0
+        
+        for doc, score in sorted(results, key=lambda x: x[1], reverse=True):
+            doc_text = f"[相关度:{score:.2f}] {doc.page_content}"
+            doc_tokens = calculate_tokens(doc_text)
+            
+            if context_max_tokens <= 0:
+                break
+                
+            if doc_tokens > context_max_tokens:
+                truncated = tokenizer.decode(
+                    tokenizer.encode(
+                        doc_text,
+                        max_length=context_max_tokens,
+                        truncation=True,
+                        add_special_tokens=False
+                    )
+                )
+                if truncated:
+                    context_parts.append(truncated)
+                    context_max_tokens -= calculate_tokens(truncated)
+                break
+            else:
+                context_parts.append(doc_text)
+                context_max_tokens -= doc_tokens
+        
+        context = "\n".join(context_parts)
+        
+        # 4. 构建完整提示
+        prompt = PROMPT_TEMPLATES["rag"]["template"].format(
+            history=history_text,
+            context=context,
+            query=query
+        )
+        
+        # 5. 调整生成参数
+        used_tokens = calculate_tokens(prompt)
+        adjusted_max = MAX_CONTEXT_LENGTH - used_tokens
+        safe_max_tokens = max(min(adjusted_max, params.max_tokens or 400), 1)  # 确保≥1
+        params.max_tokens = safe_max_tokens
+        
+        logger.info(f"Token使用 | 总上下文: {used_tokens} | 可生成: {params.max_tokens}")
 
-        logger.debug(f"生成使用的提示模板: {prompt[:200]}...")
-
+        # 6. 调用vLLM生成
         async for raw_chunk in call_vllm_service_streaming(prompt, params):
             try:
                 # 第一步：强制类型转换确保安全
@@ -333,9 +470,20 @@ app = FastAPI()
 
 @app.on_event("startup")
 async def startup_event():
-    global vectorstore
+    global vectorstore, tokenizer
     vectorstore_path = "./vectorstore"
     vectorstore = await load_vector_store(vectorstore_path)
+    # 初始化tokenizer（需要与vLLM服务端模型一致）
+    try:
+        tokenizer = AutoTokenizer.from_pretrained("./models/QwQ-32B")
+        logger.info("Tokenizer加载成功")
+    except Exception as e:
+        logger.error(f"Tokenizer加载失败: {str(e)}")
+        raise
+
+def calculate_tokens(text: str) -> int:
+    """计算文本的token数"""
+    return len(tokenizer.encode(text, add_special_tokens=False))
 
 @app.post("/generate")
 async def generate_answer_endpoint(request: QueryRequest):
@@ -389,14 +537,23 @@ class OpenAIRequest(BaseModel):
 @app.post("/v1/chat/completions")
 async def openai_compatible_endpoint(request: OpenAIRequest):
     """OpenAI兼容接口，方便Chatbox等客户端接入"""
-    # print(request.messages)
+    history = []
     # 提取用户问题（最后一条）
     user_messages = [msg for msg in request.messages if msg.role == "user"]
     user_message = user_messages[-1].content if user_messages else "请提供问题"
     
+    # 构建历史记录（兼容 OpenAI 格式）
+    history = []
+    for msg in request.messages:
+        if msg.role == "user":
+            history.append({"user": msg.content, "assistant": ""})
+        elif msg.role == "assistant" and history:
+            history[-1]["assistant"] = msg.content
+
     # 转换为内部请求格式
     internal_request = QueryRequest(
         query=user_message,
+        history=history,
         model=request.model,
         stream=request.stream,
         max_tokens=request.max_tokens,
@@ -538,7 +695,7 @@ if __name__ == "__main__":
     )
 
 '''
-curl -N  -X POST "http://localhost:8084/generate" -H "Content-Type: application/json" -d '{ "query": "luqia", "stream": false, "max_tokens": 200}'
+curl -N  -X POST "http://localhost:8084/generate" -H "Content-Type: application/json" -d '{ "query": "你好","history":["user:你好，你叫什么名字？","assistant:我叫李琪，你好，很高兴认识你！"], "stream": true, "max_tokens": 200}'
 
 curl -X POST "http://localhost:8084/v1/chat/completions" -H "Content-Type: application/json" -d '{ "model": "deepseekr1", "messages": [{"role": "user", "content": "luqia"}],"temperature": 0.7,"max_tokens": 200}'
 
