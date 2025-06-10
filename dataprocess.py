@@ -200,59 +200,156 @@ def detect_document_type(text):
     else:
         return "simple"      # 简单文档
 
+class DocumentNode:
+    """文档节点类，用于构建文档树结构"""
+    def __init__(self, content, metadata=None, parent=None):
+        self.content = content
+        self.metadata = metadata or {}
+        self.parent = parent
+        self.children = []
+        self.level = 0 if parent is None else parent.level + 1
+        
+    def add_child(self, child):
+        child.parent = self
+        child.level = self.level + 1
+        self.children.append(child)
+        
+    def to_document(self):
+        """转换为LangChain Document对象"""
+        metadata = self.metadata.copy()
+        metadata.update({
+            'level': self.level,
+            'parent_id': self.parent.metadata.get('node_id') if self.parent else None,
+            'has_children': len(self.children) > 0
+        })
+        return Document(page_content=self.content, metadata=metadata)
+
+class HierarchicalTextSplitter:
+    """支持层级结构的文本分割器"""
+    
+    def __init__(self, chunk_size=1000, chunk_overlap=200):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.sentence_tokenizer = SimpleSentenceTokenizer()
+        
+    def split_with_hierarchy(self, text, metadata=None):
+        """基于层级结构分割文本"""
+        root_node = DocumentNode(text, metadata)
+        self._process_node(root_node)
+        return root_node
+    
+    def _process_node(self, node):
+        """处理节点内容，创建子节点"""
+        text = node.content
+        
+        # 检测标题
+        heading_patterns = [
+            r'^#{1,6}\s+(.+)$',  # Markdown标题
+            r'^第[一二三四五六七八九十\d]+[章节部分](.+)$',  # 中文章节
+            r'^[一二三四五六七八九十\d]+[、.]\s*(.+)$',  # 中文编号
+            r'^\d+\.\s*(.+)$',  # 数字编号
+        ]
+        
+        lines = text.split('\n')
+        current_section = []
+        current_heading = None
+        
+        for line in lines:
+            line_strip = line.strip()
+            is_heading = False
+            heading_content = None
+            
+            for pattern in heading_patterns:
+                match = re.match(pattern, line_strip)
+                if match:
+                    is_heading = True
+                    heading_content = match.group(1).strip()
+                    break
+            
+            if is_heading:
+                # 处理前一个部分
+                if current_section:
+                    section_text = '\n'.join(current_section)
+                    if len(section_text) > self.chunk_size:
+                        # 需要进一步分割
+                        sub_chunks = self._split_large_section(section_text)
+                        for chunk in sub_chunks:
+                            child = DocumentNode(chunk, node.metadata.copy())
+                            node.add_child(child)
+                    else:
+                        child = DocumentNode(section_text, node.metadata.copy())
+                        node.add_child(child)
+                
+                # 创建新的标题节点
+                current_heading = heading_content
+                current_section = [line_strip]
+            else:
+                current_section.append(line)
+        
+        # 处理最后一个部分
+        if current_section:
+            section_text = '\n'.join(current_section)
+            if len(section_text) > self.chunk_size:
+                sub_chunks = self._split_large_section(section_text)
+                for chunk in sub_chunks:
+                    child = DocumentNode(chunk, node.metadata.copy())
+                    node.add_child(child)
+            else:
+                child = DocumentNode(section_text, node.metadata.copy())
+                node.add_child(child)
+    
+    def _split_large_section(self, text):
+        """分割大段文本"""
+        chunks = []
+        sentences = self.sentence_tokenizer.split_sentences(text)
+        
+        current_chunk = ""
+        for sentence in sentences:
+            if len(current_chunk) + len(sentence) > self.chunk_size and current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = self._get_overlap_text(current_chunk) + " " + sentence
+            else:
+                current_chunk += " " + sentence if current_chunk else sentence
+        
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
+        
+        return chunks
+    
+    def _get_overlap_text(self, text):
+        """获取重叠文本"""
+        sentences = self.sentence_tokenizer.split_sentences(text)
+        overlap_text = ""
+        
+        for sentence in reversed(sentences):
+            if len(overlap_text) + len(sentence) <= self.chunk_overlap:
+                overlap_text = sentence + " " + overlap_text
+            else:
+                break
+        
+        return overlap_text.strip()
+
 def smart_split_documents(documents, chunk_size=1000, chunk_overlap=200):
-    """智能分割文档"""
-    splitter = SmartTextSplitter(chunk_size, chunk_overlap)
+    """智能分割文档（支持层级结构）"""
+    splitter = HierarchicalTextSplitter(chunk_size, chunk_overlap)
     all_chunks = []
     
     for doc in documents:
         text = doc.page_content
         if not text.strip():
             continue
-            
-        doc_type = detect_document_type(text)
-        print(f"文档类型: {doc_type}, 长度: {len(text)}")
         
-        # 根据文档类型选择分割策略
-        try:
-            if doc_type == "structured":
-                chunks = splitter.split_by_headings(text)
-            elif doc_type == "narrative":
-                chunks = splitter.split_by_semantic_structure(text)
-            else:
-                chunks = splitter.split_by_sentences(text)
-        except Exception as e:
-            print(f"智能分割失败，使用传统方法: {e}")
-            # 回退到传统分割方法
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap
-            )
-            chunks = text_splitter.split_text(text)
+        # 创建文档树
+        root_node = splitter.split_with_hierarchy(text, doc.metadata)
         
-        # 如果智能分割结果仍然太大，使用传统方法进一步分割
-        final_chunks = []
-        for chunk in chunks:
-            if len(chunk) > chunk_size * 1.5:  # 超过1.5倍大小才进一步分割
-                text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=chunk_size,
-                    chunk_overlap=chunk_overlap
-                )
-                sub_chunks = text_splitter.split_text(chunk)
-                final_chunks.extend(sub_chunks)
-            else:
-                final_chunks.append(chunk)
+        # 遍历文档树，收集所有节点
+        def collect_nodes(node, node_id=0):
+            node.metadata['node_id'] = node_id
+            all_chunks.append(node.to_document())
+            for i, child in enumerate(node.children):
+                collect_nodes(child, f"{node_id}_{i}")
         
-        # 转换为 Document 对象
-        for i, chunk in enumerate(final_chunks):
-            if chunk.strip():  # 只添加非空块
-                metadata = doc.metadata.copy()
-                metadata.update({
-                    'chunk_id': i,
-                    'doc_type': doc_type,
-                    'chunk_count': len(final_chunks)
-                })
-                all_chunks.append(Document(page_content=chunk.strip(), metadata=metadata))
+        collect_nodes(root_node)
     
     return all_chunks
 
@@ -340,7 +437,7 @@ def preprocess_text(text):
     return text
 
 def vectorize_and_save_enhanced(texts, save_path, batch_size=32):
-    """增强的向量化保存"""
+    """增强的向量化保存（支持层级结构）"""
     if not texts:
         print("没有文档需要处理")
         return
@@ -349,7 +446,7 @@ def vectorize_and_save_enhanced(texts, save_path, batch_size=32):
     processed_texts = []
     for doc in texts:
         processed_content = preprocess_text(doc.page_content)
-        if processed_content:  # 只保留非空文档
+        if processed_content:
             doc.page_content = processed_content
             processed_texts.append(doc)
     
@@ -373,6 +470,7 @@ def vectorize_and_save_enhanced(texts, save_path, batch_size=32):
     vectorstore.save_local(save_path)
     print(f"向量存储已保存到: {save_path}")
     print(f"共处理文档块数: {len(processed_texts)}")
+    print(f"文档层级结构已保存")
 
 def load_all_documents_from_folder_enhanced(folder_path):
     """增强的文件夹遍历加载"""
